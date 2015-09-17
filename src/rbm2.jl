@@ -1,25 +1,38 @@
 
+
+# 1. temporaly remove support for sparse matrices
+# 2. backend as type parameter
+# 3. use opts dictionary everywhere instead of explicit parameters
+# 4. implement vector operations as conversion + matrix operation (to keep the core small)
+# 5. drop support for Julia 0.3
+# 6. find CUDA implementation for exp()
+# 7. wrap CURAND
+
+include("utils.jl")
+
+abstract Backend
+
+immutable CPUBackend <: Backend
+end
+
+immutable GPUBackend <: Backend
+end
+
+
 using Distributions
 using Base.LinAlg.BLAS
 using Compat
 import Base.getindex
 import StatsBase.fit
 
-# data types: any array, dense or sparse
-typealias Mat{T} AbstractArray{T, 2}
-typealias Vec{T} AbstractArray{T, 1}
-
-# RBM field types: CPU or GPU arrays
-typealias DMat{T} Union(Matrix{T}, CudaMatrix{T})
-typealias DVec{T} Union(Vector{T}, CudaVector{T})
-
+typealias DMat{T} Union{Matrix}
+typealias DVec{T} Union{Vector}
 
 typealias Gaussian Normal
 
 abstract AbstractRBM
 
-@runonce type RBM{V,H} <: AbstractRBM
-    backend::Backend
+@runonce type RBM{B,V,H} <: AbstractRBM
     W::DMat{Float64}
     vbias::DVec{Float64}
     hbias::DVec{Float64}
@@ -28,15 +41,16 @@ abstract AbstractRBM
     momentum::Float64
 end
 
-function RBM(V::Type, H::Type,
-             n_vis::Int, n_hid::Int; sigma=0.001, momentum=0.9)
-    backend = GPUBackend() # TODO: choose based on environment
-    W = make_array(backend, rand(Normal(0, sigma), (n_hid, n_vis)))
-    vbias = make_array(backend, zeros(n_vis))
-    hbias = make_array(backend, zeros(n_hid))
-    dW_prev = make_array(backend, zeros(n_hid, n_vis))
-    persistent_chain = make_array(backend, Array(Float64, 0, 0))
-    RBM{V,H}(W, vbias, hbias, dW_prev, persistent_chain, momentum)
+function RBM(B::Type, V::Type, H::Type, n_vis::Int, n_hid::Int; opts...)
+    opts = Dict(opts)
+    println(typeof(opts))
+    sigma = get(opts, :sigma, 0.001)
+    momentum = get(opts, :momentum, 0.9)
+    RBM{B,V,H}(rand(Normal(0, sigma), (n_hid, n_vis)),
+        zeros(n_vis), zeros(n_hid),
+        zeros(n_hid, n_vis),
+        Array(Float64, 0, 0),
+        momentum)
 end
 
 
