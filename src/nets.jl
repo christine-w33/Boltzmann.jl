@@ -6,13 +6,13 @@ import Base.getindex
 abstract Net
 
 immutable DBN <: Net
-    layers::Vector{RBM}
+    layers::Vector{AbstractRBM}
     layernames::Vector{AbstractString}
 end
 
-DBN{LT<:Tuple{AbstractString,RBM}}(namedlayers::Vector{LT}) =
+DBN{LT<:Tuple{AbstractString,AbstractRBM}}(namedlayers::Vector{LT}) =
     DBN(map(p -> p[2], namedlayers), map(p -> p[1], namedlayers))
-    
+
 
 immutable DAE <: Net
     layers::Vector{RBM}
@@ -61,21 +61,30 @@ function fit(dbn::DBN, X::Mat{Float64}; ctx = Dict{Any,Any}())
     n_samples = size(X,2)
     batch_size = @get(ctx, :batch_size, 100)
     n_batches = round(Int, ceil(n_samples / batch_size))
-    n_epochs = @get(ctx, :n_epochs, 10)
+    n_epochs = @get(ctx, :n_epochs, 100)
     reporter = @get_or_create(ctx, :reporter, TextReporter())
     for k = 1:length(dbn.layers)
-        for epoch=1:n_epochs
-            report(reporter, dbn, epoch, k)
-            for i=1:n_batches
-                batch = X[:, ((i-1)*batch_size + 1):min(i*batch_size, end)]
-                input = k == 1 ? batch : hid_means_at_layer(dbn, batch, k-1)
-                fit_batch!(dbn[k], input, ctx)
+        if typeof(dbn[k]) == Boltzmann.ConditionalRBM{Float64,Distributions.Bernoulli,Distributions.Bernoulli}
+            input = hid_means_at_layer(dbn, X, k-1)
+            #try and see if n_hid = dbn[k].n_hid
+            n_vis = size(dbn[k].vbias, 1)
+            n_hid = size(dbn[k].hbias, 1)
+            #println("input: ", input)
+            fit_cdbn!(dbn[k], input, n_vis, n_hid, ctx)
+        else
+            for epoch=1:n_epochs
+                report(reporter, dbn, epoch, k)
+                for i=1:n_batches
+                    batch = X[:, ((i-1)*batch_size + 1):min(i*batch_size, end)]
+                    input = k == 1 ? batch : hid_means_at_layer(dbn, batch, k-1)
+                    fit_batch!(dbn[k], input, ctx)
+                end
             end
         end
     end
 end
 
-fit{T}(dbn::DBN, X::Mat{T}; opts...) = fit(rbm, X, Dict(opts))
+fit(dbn::DBN, X::Mat; opts...) = fit(dbn, X, Dict{Any,Any}(opts))
 
 
 function invert(rbm::RBM)
@@ -100,3 +109,11 @@ function unroll(dbn::DBN)
     return DAE(layers, layernames)
 end
 
+function dbn_predict(dbn::DBN, data::Mat, tsteps::Int)
+    data = hid_means(dbn[1], data)
+    prediction = predict_sequence(dbn[2], data, tsteps) ##the issue is here
+    #println("predictions: ", prediction)
+    prediction_vis = vis_means(dbn[1], prediction)
+    prediction_vis = sample(Bernoulli, prediction_vis)
+    return prediction_vis
+end
